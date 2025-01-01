@@ -9,6 +9,7 @@ module.exports = {
     popup: './src/popup/popup.js',
     content: './src/content/content.js',
     background: './src/background/background.js',
+    'model-worker': './src/worker/model-worker.js',
   },
   output: {
     path: path.resolve(__dirname, 'dist'),
@@ -33,8 +34,8 @@ module.exports = {
   plugins: [
     new CopyPlugin({
       patterns: [
-        { from: "manifest.json", to: "manifest.json" },
-        { from: "src/popup/popup.html", to: "popup.html" },
+        { from: "manifest.json", to: "." },
+        { from: "src/popup/popup.html", to: "." },
       ],
     }),
     new Dotenv(),

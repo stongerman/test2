@@ -98,20 +98,40 @@ document.addEventListener('DOMContentLoaded', function() {
       askButton.textContent = '正在询问AI...';
       contentArea.value += '\n\n正在等待AI回答...\n';
 
+      let attempts = 0;
+      const maxAttempts = 60; // 60 seconds timeout
       const response = await new Promise((resolve, reject) => {
-        chrome.runtime.sendMessage({
-          type: 'processContent',
-          data: { question, content: extractedData }
-        }, response => {
-          if (chrome.runtime.lastError) {
-            reject(chrome.runtime.lastError);
-          } else {
-            resolve(response);
-          }
-        });
+        const checkModel = () => {
+          console.log('[Popup] Sending message to background');
+          chrome.runtime.sendMessage({
+            type: 'processContent',
+            data: { question, content: extractedData }
+          }, response => {
+            if (chrome.runtime.lastError) {
+              reject(chrome.runtime.lastError);
+            } else if (response.status === 'loading') {
+              attempts++;
+              if (attempts >= maxAttempts) {
+                reject(new Error('AI模型加载超时，请刷新页面重试'));
+              } else {
+                const remainingTime = maxAttempts - attempts;
+                const message = response.message || '正在加载AI模型...';
+                contentArea.value = `${message}\n重试第 ${attempts} 次 (共 ${maxAttempts} 次)\n预计剩余时间：${remainingTime} 秒`;
+                setTimeout(checkModel, 1000);
+              }
+            } else {
+              resolve(response);
+            }
+          });
+        };
+        checkModel();
       });
 
-      contentArea.value += `\n问题：${question}\n回答：${response}`;
+      if (response && typeof response.response === "string") {
+        contentArea.value += `\n问题：${question}\n回答：${response.response}`;
+      } else {
+        showError("AI返回格式异常，请重试");
+      }
     } catch (error) {
       showError(error.message || 'AI回答出错');
     } finally {

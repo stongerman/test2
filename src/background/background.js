@@ -1,62 +1,70 @@
-// Background script for handling TensorFlow.js model and file downloads
-import * as tf from '@tensorflow/tfjs';
-import * as use from '@tensorflow-models/universal-sentence-encoder';
+// Background script for handling model worker and file downloads
 import * as XLSX from 'xlsx';
 
-let model = null;
-let encoder = null;
-let modelStatus = 'not_initialized';
+let modelWorker = null;
+let pendingRequests = {};
 
-// Initialize TensorFlow.js and Universal Sentence Encoder
-async function initializeModel() {
-  try {
-    if (!encoder) {
-      encoder = await use.load();
-      modelStatus = 'model_ready';
-      console.log('Model loaded successfully');
+// Initialize web worker for model processing
+function setupWorker() {
+  modelWorker = new Worker(chrome.runtime.getURL("model-worker.js"));
+  modelWorker.onmessage = (evt) => {
+    const { type, data, requestId } = evt.data;
+    console.log(`[Worker Message Received] Type: ${type}, RequestId: ${requestId}`, data);
+
+    if (requestId && pendingRequests[requestId]) {
+      const { resolve, reject } = pendingRequests[requestId];
+      delete pendingRequests[requestId];  // Clean up immediately
+
+      switch (type) {
+        case "response":
+          resolve(data);
+          break;
+        case "error":
+          reject(new Error(data));
+          break;
+        case "status":
+          if (data === "model_ready") {
+            resolve(data);
+          } else if (data.includes("error") || data.includes("失败")) {
+            reject(new Error(data));
+          }
+          break;
+      }
+    } else if (type === "status") {
+      // Log status messages even without requestId
+      console.log("[Worker Status]", data);
     }
-  } catch (error) {
-    console.error('Error loading model:', error);
-    modelStatus = 'error';
-  }
+  };
+  
+  // Initialize the model in the worker
+  modelWorker.postMessage({ type: "init" });
 }
 
-// Process content with semantic similarity
-async function processContent(question, content) {
+// Set up worker when extension loads
+setupWorker();
+
+// Queue content for processing by worker
+async function queueContentRequest(question, content) {
   try {
     const context = `${content.title}\n${content.mainContent.text.substring(0, 1000)}`;
-    const sentences = [question, context];
-    const embeddings = await encoder.embed(sentences);
-    
-    const similarity = tf.tidy(() => {
-      const questionEmb = embeddings.slice([0, 0], [1, -1]);
-      const contextEmb = embeddings.slice([1, 0], [1, -1]);
-      return tf.metrics.cosineProximity(questionEmb, contextEmb).dataSync()[0];
+    return new Promise((resolve, reject) => {
+      const requestId = Date.now();
+      pendingRequests[requestId] = { resolve, reject };
+      
+      // Forward the request to the worker
+      modelWorker.postMessage({
+        type: "generate",
+        requestId,
+        data: {
+          question,
+          context,
+          content
+        }
+      });
     });
-
-    // Generate response based on similarity
-    let response = '';
-    if (similarity > 0.7) {
-      response = `根据页面内容，我找到了与您问题高度相关的信息。\n\n`;
-      if (question.includes('表格') && content.mainContent.tables.length > 0) {
-        response += `页面包含 ${content.mainContent.tables.length} 个表格。\n`;
-        const firstTable = content.mainContent.tables[0];
-        response += `第一个表格的列标题：${firstTable.headers.join(', ')}\n`;
-      }
-      if (question.includes('列表') && content.mainContent.lists.length > 0) {
-        response += `页面包含 ${content.mainContent.lists.length} 个列表。\n`;
-        const firstList = content.mainContent.lists[0];
-        response += `第一个列表的内容：\n${firstList.items.slice(0, 3).join('\n')}\n`;
-      }
-      response += `\n相关内容：${content.mainContent.text.substring(0, 300)}...`;
-    } else {
-      response = '抱歉，我在页面中没有找到与您问题直接相关的信息。请尝试换个方式提问，或者查看完整的页面内容。';
-    }
-    
-    return response;
   } catch (error) {
-    console.error('Error processing content:', error);
-    throw new Error('处理内容时出错，请稍后重试');
+    console.error('Error queuing content request:', error);
+    throw new Error('处理请求时出错，请稍后重试');
   }
 }
 
@@ -68,26 +76,18 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Handle async operations using Promise
     (async () => {
       try {
-        // Initialize model if not already initialized
-        if (modelStatus === 'not_initialized') {
-          await initializeModel();
-        }
-        
-        if (modelStatus === 'error') {
-          sendResponse({ error: '模型加载失败，请刷新页面重试' });
+        if (!modelWorker) {
+          // If worker isn't ready, try to set it up
+          setupWorker();
+          sendResponse({ status: 'loading', message: '模型正在初始化，请稍等...' });
           return;
         }
         
-        if (modelStatus !== 'model_ready') {
-          sendResponse({ error: '模型正在加载中，请稍后再试' });
-          return;
-        }
-        
-        const response = await processContent(question, content);
+        const response = await queueContentRequest(question, content);
         sendResponse({ response });
       } catch (error) {
         console.error('Error:', error);
-        sendResponse({ error: error.message });
+        sendResponse({ error: error.message || '处理请求时出错，请稍后重试' });
       }
     })();
     

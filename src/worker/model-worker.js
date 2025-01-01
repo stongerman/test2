@@ -23,22 +23,24 @@ function cosineSimilarity(a, b) {
 
 // Handle messages from main thread
 self.onmessage = async function(e) {
-  const { type, data } = e.data;
+  const { type, data, requestId } = e.data;
+  console.log(`[Worker Received Message] Type: ${type}, RequestId: ${requestId}`, data);
 
   switch (type) {
     case 'init':
       if (!model && !isModelLoading) {
         try {
           isModelLoading = true;
-          self.postMessage({ type: 'status', data: 'loading_model' });
+          self.postMessage({ type: 'status', data: 'loading_model', requestId });
           
           model = await use.load();
           
-          self.postMessage({ type: 'status', data: 'model_ready' });
+          self.postMessage({ type: 'status', data: 'model_ready', requestId });
         } catch (error) {
           self.postMessage({ 
             type: 'error', 
-            data: '模型加载失败: ' + error.message 
+            data: '模型加载失败: ' + error.message,
+            requestId 
           });
         } finally {
           isModelLoading = false;
@@ -95,12 +97,14 @@ self.onmessage = async function(e) {
         
         self.postMessage({ 
           type: 'response', 
-          data: response 
+          data: response,
+          requestId
         });
       } catch (error) {
         self.postMessage({ 
           type: 'error', 
-          data: '生成回答失败: ' + error.message 
+          data: '生成回答失败: ' + error.message,
+          requestId
         });
       }
       break;
