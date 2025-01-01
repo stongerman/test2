@@ -1,0 +1,2 @@
+/*! For license information please see version_test.js.LICENSE.txt */
+"use strict";Object.defineProperty(exports,"__esModule",{value:!0});var index_1=require("./index");describe("version",(function(){it("version matches package.json",(function(){var e=require("../package.json").version;expect(index_1.version).toBe(e)}))}));
