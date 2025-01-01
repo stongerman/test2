@@ -150,7 +150,7 @@ function getTopChunks(chunks, similarities, topK) {
 /**
  * Generate a response based on the question and relevant content
  */
-function generateResponse(question, relevantChunks) {
+function generateResponse(question, relevantChunks, numericData = { viewCounts: [], metrics: [] }) {
   // Convert question to lowercase for easier matching
   const lowerQuestion = question.toLowerCase();
   
