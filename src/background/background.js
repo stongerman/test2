@@ -6,15 +6,9 @@ import * as use from '@tensorflow-models/universal-sentence-encoder';
 let model = null;
 let isModelLoading = false;
 
-// Model loading configuration with fallback URLs
+// Model configuration
 const MODEL_CONFIG = {
-  // Default TF Hub URL
-  defaultModelUrl: 'https://tfhub.dev/tensorflow/tfjs-model/universal-sentence-encoder-lite/1/default/1',
-  // Fallback URLs - using CDNs that are accessible in China
-  fallbackUrls: [
-    'https://cdn.jsdelivr.net/npm/@tensorflow-models/universal-sentence-encoder',
-    'https://unpkg.com/@tensorflow-models/universal-sentence-encoder'
-  ]
+  modelPath: './models/universal-sentence-encoder.js'
 };
 
 // Pre-defined responses for different types of questions
@@ -49,31 +43,16 @@ async function setupModel() {
         const loadStart = Date.now();
         const loadTimeout = 60000; // 60 second timeout
 
-        // Try loading from each URL until success
-        for (const url of [MODEL_CONFIG.defaultModelUrl, ...MODEL_CONFIG.fallbackUrls]) {
-          try {
-            console.log(`[Background] Attempting to load model from: ${url}`);
-            const timeoutPromise = new Promise((_, reject) => {
-              setTimeout(() => reject(new Error(`模型加载超时: ${url}`)), loadTimeout);
-            });
+        const timeoutPromise = new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`模型加载超时`)), loadTimeout);
+        });
 
-            model = await Promise.race([
-              use.load({ modelUrl: url }),
-              timeoutPromise
-            ]);
-            
-            console.log(`[Background] Successfully loaded model from: ${url}`);
-            break; // Success - exit the loop
-          } catch (err) {
-            console.error(`[Background] Failed to load from ${url}:`, err);
-            if (url !== MODEL_CONFIG.fallbackUrls[MODEL_CONFIG.fallbackUrls.length - 1]) {
-              console.log('[Background] Trying next fallback URL...');
-              continue;
-            }
-            throw new Error('所有模型源都无法访问，请检查网络设置或使用VPN');
-          }
-        }
+        model = await Promise.race([
+          use.load(),
+          timeoutPromise
+        ]);
         
+        console.log(`[Background] Successfully loaded model`);
         const loadTime = Date.now() - loadStart;
         console.log(`[Background] Model loaded successfully in ${loadTime}ms`);
         return true;
@@ -82,9 +61,9 @@ async function setupModel() {
         let errorMessage = '模型加载失败';
         
         if (error.message.includes('timeout') || error.message.includes('network')) {
-          errorMessage = '模型加载失败: 网络连接问题，请检查网络设置或使用VPN';
+          errorMessage = '模型加载失败: 网络连接问题，请检查网络设置';
         } else if (error.message.includes('fetch')) {
-          errorMessage = '模型加载失败: 无法访问模型文件，可能需要使用VPN';
+          errorMessage = '模型加载失败: 无法访问模型文件';
         } else {
           errorMessage = '模型加载失败: ' + error.message;
         }

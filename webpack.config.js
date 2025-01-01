@@ -37,6 +37,7 @@ module.exports = {
       patterns: [
         { from: "manifest.json", to: "." },
         { from: "src/popup/popup.html", to: "." },
+        { from: "node_modules/@tensorflow-models/universal-sentence-encoder/dist/", to: "models/" },
       ],
     }),
     new Dotenv(),
