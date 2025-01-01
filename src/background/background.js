@@ -1,154 +1,26 @@
-// Background script for handling model processing and file downloads
+// Background script for handling file downloads and message forwarding
 import * as XLSX from 'xlsx';
-import * as tf from '@tensorflow/tfjs';
-import * as use from '@tensorflow-models/universal-sentence-encoder';
-
-let model = null;
-let isModelLoading = false;
-
-// Model configuration
-const MODEL_CONFIG = {
-  modelPath: './models/universal-sentence-encoder.js'
-};
-
-// Pre-defined responses for different types of questions
-const responses = {
-  summary: '这是一个网页的摘要：',
-  extract: '以下是提取的关键信息：',
-  analyze: '根据内容分析：',
-  default: '这是相关的内容：',
-  retrying: '模型加载失败，正在尝试其他源...'
-};
-
-// Function to get cosine similarity between two vectors
-function cosineSimilarity(a, b) {
-  return tf.tidy(() => {
-    const a_norm = a.div(tf.norm(a));
-    const b_norm = b.div(tf.norm(b));
-    return a_norm.dot(b_norm);
-  });
-}
-
-// Initialize model processing
-async function setupModel() {
-  try {
-    console.log('[Background] Setting up model processor...');
-    
-    if (!model && !isModelLoading) {
-      try {
-        console.log('[Background] Starting model initialization');
-        isModelLoading = true;
-        
-        console.log('[Background] Loading Universal Sentence Encoder model...');
-        const loadStart = Date.now();
-        const loadTimeout = 60000; // 60 second timeout
-
-        const timeoutPromise = new Promise((_, reject) => {
-          setTimeout(() => reject(new Error(`模型加载超时`)), loadTimeout);
-        });
-
-        model = await Promise.race([
-          use.load(),
-          timeoutPromise
-        ]);
-        
-        console.log(`[Background] Successfully loaded model`);
-        const loadTime = Date.now() - loadStart;
-        console.log(`[Background] Model loaded successfully in ${loadTime}ms`);
-        return true;
-      } catch (error) {
-        console.error('[Background] Error loading model:', error);
-        let errorMessage = '模型加载失败';
-        
-        if (error.message.includes('timeout') || error.message.includes('network')) {
-          errorMessage = '模型加载失败: 网络连接问题，请检查网络设置';
-        } else if (error.message.includes('fetch')) {
-          errorMessage = '模型加载失败: 无法访问模型文件';
-        } else {
-          errorMessage = '模型加载失败: ' + error.message;
-        }
-        
-        throw new Error(errorMessage);
-      } finally {
-        isModelLoading = false;
-      }
-    }
-    return true;
-  } catch (error) {
-    console.error('[Background] Failed to setup model:', error);
-    throw error;
-  }
-}
-
-// Initialize model when extension loads
-setupModel().catch(error => {
-  console.error('[Background] Model initialization failed:', error);
-});
-
-// Process content using the model directly
-async function processContentRequest(question, content) {
-  try {
-    console.log('[Background] Processing content request:', { question, content });
-    
-    if (!model) {
-      throw new Error('模型未加载，请先初始化模型');
-    }
-    
-    // Encode question and content sections
-    console.log('[Background] Generating embeddings for:', { question, content });
-    const embeddings = await model.embed([
-      question,
-      content.title || '',
-      (content.mainContent && content.mainContent.text) ? content.mainContent.text.substring(0, 500) : ''
-    ]);
-
-    // Get similarities
-    const titleSimilarity = await cosineSimilarity(
-      embeddings.slice([0, 0], [1, -1]),
-      embeddings.slice([1, 0], [1, -1])
-    ).data();
-    
-    const contentSimilarity = await cosineSimilarity(
-      embeddings.slice([0, 0], [1, -1]),
-      embeddings.slice([2, 0], [1, -1])
-    ).data();
-
-    // Generate response based on similarities
-    let responsePrefix = responses.default;
-    if (titleSimilarity[0] > 0.6) {
-      responsePrefix = responses.summary;
-    } else if (contentSimilarity[0] > 0.6) {
-      responsePrefix = responses.analyze;
-    }
-
-    // Extract relevant content based on similarity
-    const relevantContent = content.mainContent.text
-      .split('。')
-      .slice(0, 3)
-      .join('。');
-
-    const response = `${responsePrefix}\n${content.title}\n\n${relevantContent}`;
-    return { response };
-  } catch (error) {
-    console.error('Error processing content request:', error);
-    throw new Error('处理请求时出错：' + error.message);
-  }
-}
 
 // Handle messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === "processContent") {
-    const { question, content } = request.data;
-    
-    // Handle async operations using Promise
+    // Forward the request to content script of active tab
     (async () => {
       try {
-        if (!model) {
-          await setupModel();
+        const [activeTab] = await chrome.tabs.query({active: true, currentWindow: true});
+        if (!activeTab) {
+          throw new Error('没有找到活动标签页');
         }
         
-        const result = await processContentRequest(question, content);
-        sendResponse(result);
+        // Forward request to content script
+        chrome.tabs.sendMessage(activeTab.id, request, (response) => {
+          if (chrome.runtime.lastError) {
+            console.error('Error forwarding to content script:', chrome.runtime.lastError);
+            sendResponse({ error: '无法连接到内容脚本，请刷新页面重试' });
+            return;
+          }
+          sendResponse(response);
+        });
       } catch (error) {
         console.error('Error:', error);
         sendResponse({ error: error.message || '处理请求时出错，请稍后重试' });
