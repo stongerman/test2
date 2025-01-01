@@ -5,6 +5,7 @@ const webpack = require('webpack');
 
 module.exports = {
   mode: 'development',
+  devtool: 'source-map',
   entry: {
     popup: './src/popup/popup.js',
     content: './src/content/content.js',

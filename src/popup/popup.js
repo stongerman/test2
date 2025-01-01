@@ -102,7 +102,7 @@ document.addEventListener('DOMContentLoaded', function() {
       const maxAttempts = 60; // 60 seconds timeout
       const response = await new Promise((resolve, reject) => {
         const checkModel = () => {
-          console.log('[Popup] Sending message to background');
+          console.log('[Popup] Attempt', attempts + 1, 'of', maxAttempts, '- Sending message to background');
           chrome.runtime.sendMessage({
             type: 'processContent',
             data: { question, content: extractedData }

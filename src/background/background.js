@@ -6,47 +6,68 @@ let pendingRequests = {};
 
 // Initialize web worker for model processing
 function setupWorker() {
-  modelWorker = new Worker(chrome.runtime.getURL("model-worker.js"));
-  modelWorker.onmessage = (evt) => {
-    const { type, data, requestId } = evt.data;
-    console.log(`[Worker Message Received] Type: ${type}, RequestId: ${requestId}`, data);
+  try {
+    console.log('[Background] Setting up worker...');
+    const workerUrl = chrome.runtime.getURL("model-worker.js");
+    console.log('[Background] Worker URL:', workerUrl);
+    modelWorker = new Worker(workerUrl);
+    console.log('[Background] Worker created successfully');
+    
+    // Add error handler
+    modelWorker.onerror = (error) => {
+      console.error('[Background] Worker error:', error);
+    };
+    
+    modelWorker.onmessage = (evt) => {
+      const { type, data, requestId } = evt.data;
+      console.log(`[Background] Worker Message Received - Type: ${type}, RequestId: ${requestId}, Data:`, data);
+      
+      if (requestId && pendingRequests[requestId]) {
+        const { resolve, reject } = pendingRequests[requestId];
+        delete pendingRequests[requestId];  // Clean up immediately
 
-    if (requestId && pendingRequests[requestId]) {
-      const { resolve, reject } = pendingRequests[requestId];
-      delete pendingRequests[requestId];  // Clean up immediately
-
-      switch (type) {
-        case "response":
-          resolve(data);
-          break;
-        case "error":
-          reject(new Error(data));
-          break;
-        case "status":
-          if (data === "model_ready") {
+        switch (type) {
+          case "response":
             resolve(data);
-          } else if (data.includes("error") || data.includes("失败")) {
+            break;
+          case "error":
             reject(new Error(data));
-          }
-          break;
+            break;
+          case "status":
+            if (data === "model_ready") {
+              resolve(data);
+            } else if (data.includes("error") || data.includes("失败")) {
+              reject(new Error(data));
+            }
+            break;
+        }
+      } else if (type === "status") {
+        // Log status messages even without requestId
+        console.log("[Worker Status]", data);
       }
-    } else if (type === "status") {
-      // Log status messages even without requestId
-      console.log("[Worker Status]", data);
-    }
-  };
-  
-  // Initialize the model in the worker
-  modelWorker.postMessage({ type: "init" });
+    };
+    
+    // Initialize the model in the worker
+    console.log('[Background] Sending init message to worker');
+    modelWorker.postMessage({ type: "init" });
+  } catch (error) {
+    console.error('[Background] Failed to setup worker:', error);
+    throw error;
+  }
 }
 
 // Set up worker when extension loads
-setupWorker();
+try {
+  setupWorker();
+  console.log('[Background] Worker setup completed');
+} catch (error) {
+  console.error('[Background] Worker setup failed:', error);
+}
 
 // Queue content for processing by worker
 async function queueContentRequest(question, content) {
   try {
-    const context = `${content.title}\n${content.mainContent.text.substring(0, 1000)}`;
+    console.log('[Background] Queueing content request:', { question, content });
     return new Promise((resolve, reject) => {
       const requestId = Date.now();
       pendingRequests[requestId] = { resolve, reject };
@@ -57,7 +78,6 @@ async function queueContentRequest(question, content) {
         requestId,
         data: {
           question,
-          context,
           content
         }
       });
