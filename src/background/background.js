@@ -28,7 +28,7 @@ function setupWorker() {
 
         switch (type) {
           case "response":
-            resolve(data);
+            resolve({ response: data });
             break;
           case "error":
             reject(new Error(data));

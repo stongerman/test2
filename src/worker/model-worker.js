@@ -153,9 +153,9 @@ self.onmessage = async function(e) {
 
         const response = `${responsePrefix}\n${content.title}\n\n${relevantContent}`;
         
-        self.postMessage({ 
-          type: 'response', 
-          data: response,
+        self.postMessage({
+          type: 'response',
+          response: response,
           requestId
         });
       } catch (error) {
