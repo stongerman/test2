@@ -8,12 +8,41 @@ async function setupWorker() {
   try {
     console.log('[Background] Setting up model processor...');
     
-    // Import the worker code directly into service worker context
-    const workerUrl = chrome.runtime.getURL("model-worker.js");
-    console.log('[Background] Worker URL:', workerUrl);
+    try {
+      // Create a new worker using the bundled worker file
+      const workerUrl = chrome.runtime.getURL('model-worker.js');
+      console.log('[Background] Worker URL:', workerUrl);
+      
+      if (!workerUrl) {
+        throw new Error('Failed to get worker URL from chrome.runtime.getURL');
+      }
+      
+      const worker = new Worker(workerUrl, { type: 'module' });
+      console.log('[Background] Worker created successfully');
+      
+      // Set up error handler
+      worker.onerror = (error) => {
+        console.error('[Background] Worker error:', error);
+        throw new Error(`Worker initialization failed: ${error.message}`);
+      };
+      
+      return worker;
+    } catch (error) {
+      console.error('[Background] Failed to create worker:', error);
+      throw error;
+    }
     
-    // Load the worker code in the service worker context
-    await import(workerUrl);
+    // Set up worker message handling
+    worker.onmessage = (event) => {
+      const { type, data, requestId } = event.data;
+      console.log('[Background] Received worker message:', { type, data, requestId });
+      if (type === 'model_ready') {
+        modelProcessor = worker;
+      }
+    };
+    
+    // Initialize the worker
+    worker.postMessage({ type: 'init', requestId: Date.now() });
     console.log('[Background] Model processor code loaded successfully');
     
     // Initialize the model processor
@@ -42,8 +71,29 @@ async function processContentRequest(question, content) {
       throw new Error('Model processor not initialized');
     }
     
-    const response = await modelProcessor.generateResponse(question, content);
-    return { response };
+    return new Promise((resolve, reject) => {
+      const requestId = Date.now();
+      
+      const messageHandler = (event) => {
+        const { type, response, error, requestId: responseId } = event.data;
+        if (responseId !== requestId) return;
+        
+        modelProcessor.removeEventListener('message', messageHandler);
+        
+        if (type === 'error') {
+          reject(new Error(error));
+        } else if (type === 'response') {
+          resolve({ response });
+        }
+      };
+      
+      modelProcessor.addEventListener('message', messageHandler);
+      modelProcessor.postMessage({
+        type: 'generate',
+        data: { question, content },
+        requestId
+      });
+    });
   } catch (error) {
     console.error('Error processing content request:', error);
     throw new Error('处理请求时出错，请稍后重试');
