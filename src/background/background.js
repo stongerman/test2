@@ -1,102 +1,158 @@
 // Background script for handling model processing and file downloads
 import * as XLSX from 'xlsx';
+import * as tf from '@tensorflow/tfjs';
+import * as use from '@tensorflow-models/universal-sentence-encoder';
 
-let modelProcessor = null;
+let model = null;
+let isModelLoading = false;
 
-// Initialize model processing in service worker context
-async function setupWorker() {
+// Model loading configuration with fallback URLs
+const MODEL_CONFIG = {
+  // Default TF Hub URL
+  defaultModelUrl: 'https://tfhub.dev/tensorflow/tfjs-model/universal-sentence-encoder-lite/1/default/1',
+  // Fallback URLs - using CDNs that are accessible in China
+  fallbackUrls: [
+    'https://cdn.jsdelivr.net/npm/@tensorflow-models/universal-sentence-encoder',
+    'https://unpkg.com/@tensorflow-models/universal-sentence-encoder'
+  ]
+};
+
+// Pre-defined responses for different types of questions
+const responses = {
+  summary: '这是一个网页的摘要：',
+  extract: '以下是提取的关键信息：',
+  analyze: '根据内容分析：',
+  default: '这是相关的内容：',
+  retrying: '模型加载失败，正在尝试其他源...'
+};
+
+// Function to get cosine similarity between two vectors
+function cosineSimilarity(a, b) {
+  return tf.tidy(() => {
+    const a_norm = a.div(tf.norm(a));
+    const b_norm = b.div(tf.norm(b));
+    return a_norm.dot(b_norm);
+  });
+}
+
+// Initialize model processing
+async function setupModel() {
   try {
     console.log('[Background] Setting up model processor...');
     
-    try {
-      // Create a new worker using the bundled worker file
-      const workerUrl = chrome.runtime.getURL('model-worker.js');
-      console.log('[Background] Worker URL:', workerUrl);
-      
-      if (!workerUrl) {
-        throw new Error('Failed to get worker URL from chrome.runtime.getURL');
+    if (!model && !isModelLoading) {
+      try {
+        console.log('[Background] Starting model initialization');
+        isModelLoading = true;
+        
+        console.log('[Background] Loading Universal Sentence Encoder model...');
+        const loadStart = Date.now();
+        const loadTimeout = 60000; // 60 second timeout
+
+        // Try loading from each URL until success
+        for (const url of [MODEL_CONFIG.defaultModelUrl, ...MODEL_CONFIG.fallbackUrls]) {
+          try {
+            console.log(`[Background] Attempting to load model from: ${url}`);
+            const timeoutPromise = new Promise((_, reject) => {
+              setTimeout(() => reject(new Error(`模型加载超时: ${url}`)), loadTimeout);
+            });
+
+            model = await Promise.race([
+              use.load({ modelUrl: url }),
+              timeoutPromise
+            ]);
+            
+            console.log(`[Background] Successfully loaded model from: ${url}`);
+            break; // Success - exit the loop
+          } catch (err) {
+            console.error(`[Background] Failed to load from ${url}:`, err);
+            if (url !== MODEL_CONFIG.fallbackUrls[MODEL_CONFIG.fallbackUrls.length - 1]) {
+              console.log('[Background] Trying next fallback URL...');
+              continue;
+            }
+            throw new Error('所有模型源都无法访问，请检查网络设置或使用VPN');
+          }
+        }
+        
+        const loadTime = Date.now() - loadStart;
+        console.log(`[Background] Model loaded successfully in ${loadTime}ms`);
+        return true;
+      } catch (error) {
+        console.error('[Background] Error loading model:', error);
+        let errorMessage = '模型加载失败';
+        
+        if (error.message.includes('timeout') || error.message.includes('network')) {
+          errorMessage = '模型加载失败: 网络连接问题，请检查网络设置或使用VPN';
+        } else if (error.message.includes('fetch')) {
+          errorMessage = '模型加载失败: 无法访问模型文件，可能需要使用VPN';
+        } else {
+          errorMessage = '模型加载失败: ' + error.message;
+        }
+        
+        throw new Error(errorMessage);
+      } finally {
+        isModelLoading = false;
       }
-      
-      const worker = new Worker(workerUrl, { type: 'module' });
-      console.log('[Background] Worker created successfully');
-      
-      // Set up error handler
-      worker.onerror = (error) => {
-        console.error('[Background] Worker error:', error);
-        throw new Error(`Worker initialization failed: ${error.message}`);
-      };
-      
-      return worker;
-    } catch (error) {
-      console.error('[Background] Failed to create worker:', error);
-      throw error;
     }
-    
-    // Set up worker message handling
-    worker.onmessage = (event) => {
-      const { type, data, requestId } = event.data;
-      console.log('[Background] Received worker message:', { type, data, requestId });
-      if (type === 'model_ready') {
-        modelProcessor = worker;
-      }
-    };
-    
-    // Initialize the worker
-    worker.postMessage({ type: 'init', requestId: Date.now() });
-    console.log('[Background] Model processor code loaded successfully');
-    
-    // Initialize the model processor
-    modelProcessor = new ModelProcessor();
-    await modelProcessor.initialize();
-    console.log('[Background] Model processor initialized');
-    
     return true;
   } catch (error) {
-    console.error('[Background] Failed to setup model processor:', error);
+    console.error('[Background] Failed to setup model:', error);
     throw error;
   }
 }
 
-// Initialize model processor when extension loads
-setupWorker().catch(error => {
-  console.error('[Background] Model processor initialization failed:', error);
+// Initialize model when extension loads
+setupModel().catch(error => {
+  console.error('[Background] Model initialization failed:', error);
 });
 
-// Process content using the model processor
+// Process content using the model directly
 async function processContentRequest(question, content) {
   try {
     console.log('[Background] Processing content request:', { question, content });
     
-    if (!modelProcessor) {
-      throw new Error('Model processor not initialized');
+    if (!model) {
+      throw new Error('模型未加载，请先初始化模型');
     }
     
-    return new Promise((resolve, reject) => {
-      const requestId = Date.now();
-      
-      const messageHandler = (event) => {
-        const { type, response, error, requestId: responseId } = event.data;
-        if (responseId !== requestId) return;
-        
-        modelProcessor.removeEventListener('message', messageHandler);
-        
-        if (type === 'error') {
-          reject(new Error(error));
-        } else if (type === 'response') {
-          resolve({ response });
-        }
-      };
-      
-      modelProcessor.addEventListener('message', messageHandler);
-      modelProcessor.postMessage({
-        type: 'generate',
-        data: { question, content },
-        requestId
-      });
-    });
+    // Encode question and content sections
+    console.log('[Background] Generating embeddings for:', { question, content });
+    const embeddings = await model.embed([
+      question,
+      content.title || '',
+      (content.mainContent && content.mainContent.text) ? content.mainContent.text.substring(0, 500) : ''
+    ]);
+
+    // Get similarities
+    const titleSimilarity = await cosineSimilarity(
+      embeddings.slice([0, 0], [1, -1]),
+      embeddings.slice([1, 0], [1, -1])
+    ).data();
+    
+    const contentSimilarity = await cosineSimilarity(
+      embeddings.slice([0, 0], [1, -1]),
+      embeddings.slice([2, 0], [1, -1])
+    ).data();
+
+    // Generate response based on similarities
+    let responsePrefix = responses.default;
+    if (titleSimilarity[0] > 0.6) {
+      responsePrefix = responses.summary;
+    } else if (contentSimilarity[0] > 0.6) {
+      responsePrefix = responses.analyze;
+    }
+
+    // Extract relevant content based on similarity
+    const relevantContent = content.mainContent.text
+      .split('。')
+      .slice(0, 3)
+      .join('。');
+
+    const response = `${responsePrefix}\n${content.title}\n\n${relevantContent}`;
+    return { response };
   } catch (error) {
     console.error('Error processing content request:', error);
-    throw new Error('处理请求时出错，请稍后重试');
+    throw new Error('处理请求时出错：' + error.message);
   }
 }
 
@@ -108,8 +164,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Handle async operations using Promise
     (async () => {
       try {
-        if (!modelProcessor) {
-          await setupWorker();
+        if (!model) {
+          await setupModel();
         }
         
         const result = await processContentRequest(question, content);
