@@ -28,7 +28,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           numericData: {
             // Extract view counts from various common formats
             viewCounts: Array.from(document.querySelectorAll('*')).map(el => {
-              const text = el.innerText;
+              const text = el.innerText || '';
               // Match patterns like "1.2M views", "1,234次观看", "1.5k播放量"
               const viewMatch = text.match(/(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:K|k|M|万|千|百万)?\s*(views?|次观看|播放量|观看)/i);
               if (viewMatch) {
@@ -53,7 +53,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             
             // Extract other numeric metrics (likes, comments, etc.)
             metrics: Array.from(document.querySelectorAll('*')).map(el => {
-              const text = el.innerText;
+              const text = el.innerText || '';
               // Match patterns like "1.2K likes", "1,234 评论"
               const metricMatch = text.match(/(\d+(?:,\d+)*(?:\.\d+)?)\s*(?:K|k|M|万|千|百万)?\s*(likes?|comments?|赞|评论|点赞)/i);
               if (metricMatch) {
