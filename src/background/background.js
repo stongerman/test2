@@ -1,91 +1,51 @@
-// Background script for handling model worker and file downloads
+// Background script for handling model processing and file downloads
 import * as XLSX from 'xlsx';
 
-let modelWorker = null;
-let pendingRequests = {};
+let modelProcessor = null;
 
-// Initialize web worker for model processing
-function setupWorker() {
+// Initialize model processing in service worker context
+async function setupWorker() {
   try {
-    console.log('[Background] Setting up worker...');
+    console.log('[Background] Setting up model processor...');
+    
+    // Import the worker code directly into service worker context
     const workerUrl = chrome.runtime.getURL("model-worker.js");
     console.log('[Background] Worker URL:', workerUrl);
-    modelWorker = new Worker(workerUrl);
-    console.log('[Background] Worker created successfully');
     
-    // Add error handler
-    modelWorker.onerror = (error) => {
-      console.error('[Background] Worker error:', error);
-    };
+    // Load the worker code in the service worker context
+    await import(workerUrl);
+    console.log('[Background] Model processor code loaded successfully');
     
-    modelWorker.onmessage = (evt) => {
-      const { type, data, requestId } = evt.data;
-      console.log(`[Background] Worker Message Received - Type: ${type}, RequestId: ${requestId}, Data:`, data);
-      
-      if (requestId && pendingRequests[requestId]) {
-        const { resolve, reject } = pendingRequests[requestId];
-        delete pendingRequests[requestId];  // Clean up immediately
-
-        switch (type) {
-          case "response":
-            console.log('[Background] Received from worker:', evt.data);
-            console.log('[Background] Sending to popup:', evt.data);
-            resolve(evt.data);
-            break;
-          case "error":
-            reject(new Error(data));
-            break;
-          case "status":
-            if (data === "model_ready") {
-              resolve(data);
-            } else if (data.includes("error") || data.includes("失败")) {
-              reject(new Error(data));
-            }
-            break;
-        }
-      } else if (type === "status") {
-        // Log status messages even without requestId
-        console.log("[Worker Status]", data);
-      }
-    };
+    // Initialize the model processor
+    modelProcessor = new ModelProcessor();
+    await modelProcessor.initialize();
+    console.log('[Background] Model processor initialized');
     
-    // Initialize the model in the worker
-    console.log('[Background] Sending init message to worker');
-    modelWorker.postMessage({ type: "init" });
+    return true;
   } catch (error) {
-    console.error('[Background] Failed to setup worker:', error);
+    console.error('[Background] Failed to setup model processor:', error);
     throw error;
   }
 }
 
-// Set up worker when extension loads
-try {
-  setupWorker();
-  console.log('[Background] Worker setup completed');
-} catch (error) {
-  console.error('[Background] Worker setup failed:', error);
-}
+// Initialize model processor when extension loads
+setupWorker().catch(error => {
+  console.error('[Background] Model processor initialization failed:', error);
+});
 
-// Queue content for processing by worker
-async function queueContentRequest(question, content) {
+// Process content using the model processor
+async function processContentRequest(question, content) {
   try {
-    console.log('[Background] Queueing content request:', { question, content });
-    return new Promise((resolve, reject) => {
-      const requestId = Date.now();
-      pendingRequests[requestId] = { resolve, reject };
-      
-      // Forward the request to the worker
-      modelWorker.postMessage({
-        type: "generate",
-        requestId,
-        data: {
-          question,
-          content
-        }
-      });
-    });
+    console.log('[Background] Processing content request:', { question, content });
+    
+    if (!modelProcessor) {
+      throw new Error('Model processor not initialized');
+    }
+    
+    const response = await modelProcessor.generateResponse(question, content);
+    return { response };
   } catch (error) {
-    console.error('Error queuing content request:', error);
+    console.error('Error processing content request:', error);
     throw new Error('处理请求时出错，请稍后重试');
   }
 }
@@ -98,15 +58,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     // Handle async operations using Promise
     (async () => {
       try {
-        if (!modelWorker) {
-          // If worker isn't ready, try to set it up
-          setupWorker();
-          sendResponse({ status: 'loading', message: '模型正在初始化，请稍等...' });
-          return;
+        if (!modelProcessor) {
+          await setupWorker();
         }
         
-        const response = await queueContentRequest(question, content);
-        sendResponse({ response });
+        const result = await processContentRequest(question, content);
+        sendResponse(result);
       } catch (error) {
         console.error('Error:', error);
         sendResponse({ error: error.message || '处理请求时出错，请稍后重试' });
