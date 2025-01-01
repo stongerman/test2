@@ -4,25 +4,54 @@ import * as XLSX from 'xlsx';
 // Handle messages from popup
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.type === "processContent") {
+    console.log('[Background] Received AI processing request:', {
+      type: request.type,
+      questionLength: request?.data?.question?.length,
+      hasContent: !!request?.data?.content,
+      timestamp: new Date().toISOString()
+    });
+
     // Forward the request to content script of active tab
     (async () => {
+      const startTime = performance.now();
       try {
+        console.log('[Background] Querying for active tab...');
         const [activeTab] = await chrome.tabs.query({active: true, currentWindow: true});
         if (!activeTab) {
+          console.error('[Background] No active tab found');
           throw new Error('没有找到活动标签页');
         }
+        
+        console.log('[Background] Forwarding request to content script:', {
+          tabId: activeTab.id,
+          url: activeTab.url,
+          timeMs: Math.round(performance.now() - startTime)
+        });
         
         // Forward request to content script
         chrome.tabs.sendMessage(activeTab.id, request, (response) => {
           if (chrome.runtime.lastError) {
-            console.error('Error forwarding to content script:', chrome.runtime.lastError);
+            console.error('[Background] Error forwarding to content script:', {
+              error: chrome.runtime.lastError,
+              tabId: activeTab.id,
+              timeMs: Math.round(performance.now() - startTime)
+            });
             sendResponse({ error: '无法连接到内容脚本，请刷新页面重试' });
             return;
           }
+          console.log('[Background] Received response from content script:', {
+            hasError: !!response?.error,
+            responseLength: response?.response?.length,
+            timeMs: Math.round(performance.now() - startTime)
+          });
           sendResponse(response);
         });
       } catch (error) {
-        console.error('Error:', error);
+        console.error('[Background] Error processing request:', {
+          error: error.message,
+          stack: error.stack,
+          timeMs: Math.round(performance.now() - startTime)
+        });
         sendResponse({ error: error.message || '处理请求时出错，请稍后重试' });
       }
     })();
