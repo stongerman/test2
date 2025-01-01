@@ -214,18 +214,257 @@ function generateResponse(question, relevantChunks, numericData = { viewCounts: 
     return `抱歉，筛选功能正在开发中。以下是相关内容：\n\n${relevantChunks.join('\n\n')}`;
   }
 
-  // For general questions, provide a more structured response
+  // Check for Amazon product analysis requests
+  if (relevantChunks[0]?.includes('amazon') || lowerQuestion.includes('product') || lowerQuestion.includes('商品')) {
+    try {
+      const amazonData = extractAmazonData(relevantChunks);
+      
+      // Handle different types of product analysis requests
+      if (lowerQuestion.includes('keyword') || lowerQuestion.includes('关键词')) {
+        return analyzeProductKeywords(amazonData);
+      } else if (lowerQuestion.includes('review') || lowerQuestion.includes('评论')) {
+        return analyzeProductReviews(amazonData);
+      } else if (lowerQuestion.includes('compare') || lowerQuestion.includes('比较')) {
+        return compareProducts(amazonData);
+      } else if (lowerQuestion.includes('feature') || lowerQuestion.includes('特点')) {
+        return analyzeProductFeatures(amazonData);
+      } else {
+        // General product analysis
+        return generateProductAnalysis(amazonData);
+      }
+    } catch (error) {
+      console.error('Error analyzing Amazon product:', error);
+      return '分析商品信息时出错：' + error.message;
+    }
+  }
+
+  // For general questions, provide a structured response
   const context = relevantChunks.join('\n\n');
   let response = `基于页面内容，以下是对您问题的回答：\n\n`;
   response += `问题：${question}\n\n`;
   response += `相关内容：\n${context}\n\n`;
   response += `总结：根据以上内容，`;
-  // Add basic content analysis
   if (context.length > 200) {
     response += context.substring(0, 200) + '...';
   } else {
     response += context;
   }
   
+  return response;
+}
+
+/**
+ * Extract structured data from Amazon product content
+ */
+function extractAmazonData(chunks) {
+  const data = {
+    title: '',
+    price: '',
+    description: '',
+    features: [],
+    reviews: [],
+    specifications: {}
+  };
+
+  for (const chunk of chunks) {
+    // Extract product title
+    const titleMatch = chunk.match(/商品名称：(.+?)(?:\n|$)/);
+    if (titleMatch) data.title = titleMatch[1].trim();
+
+    // Extract price
+    const priceMatch = chunk.match(/价格：(.+?)(?:\n|$)/);
+    if (priceMatch) data.price = priceMatch[1].trim();
+
+    // Extract description
+    const descMatch = chunk.match(/商品描述：(.+?)(?:\n|$)/);
+    if (descMatch) data.description = descMatch[1].trim();
+
+    // Extract features
+    const featureMatches = chunk.match(/特点：([\s\S]+?)(?:\n\n|$)/);
+    if (featureMatches) {
+      data.features = featureMatches[1].split('\n').map(f => f.trim()).filter(f => f);
+    }
+
+    // Extract reviews
+    const reviewMatches = chunk.match(/评论：([\s\S]+?)(?:\n\n|$)/);
+    if (reviewMatches) {
+      data.reviews = reviewMatches[1].split('\n').map(r => r.trim()).filter(r => r);
+    }
+
+    // Extract specifications
+    const specMatches = chunk.match(/规格：([\s\S]+?)(?:\n\n|$)/);
+    if (specMatches) {
+      const specs = specMatches[1].split('\n');
+      specs.forEach(spec => {
+        const [key, value] = spec.split(':').map(s => s.trim());
+        if (key && value) data.specifications[key] = value;
+      });
+    }
+  }
+
+  return data;
+}
+
+/**
+ * Analyze product keywords using TF-IDF
+ */
+function analyzeProductKeywords(data) {
+  const keywords = new Set();
+  const text = [data.title, data.description, ...data.features].join(' ');
+  
+  // Split into words and count frequencies
+  const words = text.toLowerCase().match(/[\u4e00-\u9fa5a-z]+/g) || [];
+  const frequencies = {};
+  words.forEach(word => {
+    frequencies[word] = (frequencies[word] || 0) + 1;
+  });
+
+
+  // Sort by frequency and get top keywords
+  const sortedKeywords = Object.entries(frequencies)
+    .sort(([,a], [,b]) => b - a)
+    .slice(0, 10)
+    .map(([word]) => word);
+
+  let response = '商品关键词分析：\n\n';
+  response += `标题：${data.title}\n\n`;
+  response += '主要关键词：\n';
+  sortedKeywords.forEach((keyword, index) => {
+    response += `${index + 1}. ${keyword}\n`;
+  });
+
+  return response;
+}
+
+/**
+ * Analyze product reviews for sentiment and key points
+ */
+function analyzeProductReviews(data) {
+  if (!data.reviews.length) {
+    return '未找到商品评论信息。';
+  }
+
+  let response = '商品评论分析：\n\n';
+  
+  // Analyze sentiment
+  const sentiments = data.reviews.map(review => ({
+    text: review,
+    sentiment: review.includes('好') || review.includes('赞') || review.includes('优') ? '正面' :
+               review.includes('差') || review.includes('烂') || review.includes('退') ? '负面' : '中性'
+  }));
+
+  const positiveCount = sentiments.filter(s => s.sentiment === '正面').length;
+  const negativeCount = sentiments.filter(s => s.sentiment === '负面').length;
+  
+  response += `评论情感分析：\n`;
+  response += `- 正面评论：${positiveCount}条\n`;
+  response += `- 负面评论：${negativeCount}条\n`;
+  response += `- 好评率：${Math.round((positiveCount / sentiments.length) * 100)}%\n\n`;
+
+  return response;
+}
+
+/**
+ * Analyze product features and selling points
+ */
+function analyzeProductFeatures(data) {
+  if (!data.features.length) {
+    return '未找到商品特点信息。';
+  }
+
+  let response = '商品特点分析：\n\n';
+  response += '主要卖点：\n';
+  data.features.forEach((feature, index) => {
+    response += `${index + 1}. ${feature}\n`;
+  });
+
+  if (data.specifications) {
+    response += '\n技术规格：\n';
+    Object.entries(data.specifications).forEach(([key, value]) => {
+      response += `- ${key}: ${value}\n`;
+    });
+  }
+
+  return response;
+}
+
+/**
+ * Generate comprehensive product analysis
+ */
+function generateProductAnalysis(data) {
+  let response = '商品综合分析：\n\n';
+  
+  response += `商品名称：${data.title}\n`;
+  response += `价格：${data.price}\n\n`;
+  
+  if (data.features.length) {
+    response += '主要特点：\n';
+    data.features.slice(0, 5).forEach((feature, index) => {
+      response += `${index + 1}. ${feature}\n`;
+    });
+  }
+
+  if (data.reviews.length) {
+    response += '\n评论概况：\n';
+    response += `- 总评论数：${data.reviews.length}\n`;
+    const positiveReviews = data.reviews.filter(review => 
+      review.includes('好') || review.includes('赞') || review.includes('优')
+    ).length;
+    response += `- 好评率：${Math.round((positiveReviews / data.reviews.length) * 100)}%\n`;
+  }
+
+  return response;
+}
+
+/**
+ * Compare multiple products or variations
+ */
+function compareProducts(data) {
+  // If no related products, return basic analysis
+  if (!data.relatedProducts || data.relatedProducts.length === 0) {
+    return generateProductAnalysis(data);
+  }
+
+  let response = '商品对比分析：\n\n';
+
+  // Current product details
+  response += '当前商品：\n';
+  response += `- 名称：${data.title}\n`;
+  response += `- 价格：${data.price}\n`;
+  if (data.rating && data.rating.overall) {
+    response += `- 评分：${data.rating.overall}\n`;
+  }
+
+  // Related products comparison
+  response += '\n相关商品：\n';
+  data.relatedProducts.forEach((product, index) => {
+    response += `\n${index + 1}. ${product.title}\n`;
+    response += `   价格：${product.price}\n`;
+    if (product.rating) {
+      response += `   评分：${product.rating}\n`;
+    }
+  });
+
+  // Price comparison
+  const prices = [
+    { name: '当前商品', price: parseFloat(data.price?.replace(/[^0-9.]/g, '')) },
+    ...data.relatedProducts.map(p => ({
+      name: p.title,
+      price: parseFloat(p.price?.replace(/[^0-9.]/g, ''))
+    }))
+  ].filter(p => !isNaN(p.price));
+
+  if (prices.length > 1) {
+    response += '\n价格分析：\n';
+    const avgPrice = prices.reduce((sum, p) => sum + p.price, 0) / prices.length;
+    const minPrice = Math.min(...prices.map(p => p.price));
+    const maxPrice = Math.max(...prices.map(p => p.price));
+
+    response += `- 平均价格：¥${avgPrice.toFixed(2)}\n`;
+    response += `- 最低价格：¥${minPrice.toFixed(2)}\n`;
+    response += `- 最高价格：¥${maxPrice.toFixed(2)}\n`;
+    response += `- 价格区间：¥${(maxPrice - minPrice).toFixed(2)}\n`;
+  }
+
   return response;
 }

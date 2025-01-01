@@ -92,7 +92,57 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
           headings: Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6')).map(heading => ({
             level: parseInt(heading.tagName[1]),
             text: heading.innerText.trim()
-          }))
+          })),
+          
+          // Amazon product information extraction
+          amazonProduct: window.location.hostname.includes('amazon') ? {
+            title: document.querySelector('#productTitle')?.innerText?.trim(),
+            price: {
+              current: document.querySelector('.a-price .a-offscreen')?.innerText?.trim(),
+              original: document.querySelector('.a-price.a-text-price .a-offscreen')?.innerText?.trim(),
+              deals: Array.from(document.querySelectorAll('.savingsPercentage')).map(deal => deal.innerText.trim())
+            },
+            description: {
+              bulletPoints: Array.from(document.querySelectorAll('#feature-bullets .a-list-item')).map(item => item.innerText.trim()),
+              productDescription: document.querySelector('#productDescription')?.innerText?.trim()
+            },
+            rating: {
+              overall: document.querySelector('.a-icon-star-small')?.innerText?.trim(),
+              total: document.querySelector('#acrCustomerReviewText')?.innerText?.trim(),
+              distribution: Object.fromEntries(
+                Array.from(document.querySelectorAll('.a-histogram-row')).map(row => [
+                  row.querySelector('.a-histogram-label')?.innerText?.trim(),
+                  row.querySelector('.a-histogram-percentage')?.innerText?.trim()
+                ])
+              )
+            },
+            reviews: Array.from(document.querySelectorAll('#cm-cr-dp-review-list .review')).map(review => ({
+              text: review.querySelector('.review-text')?.innerText?.trim(),
+              rating: review.querySelector('.review-rating')?.innerText?.trim(),
+              date: review.querySelector('.review-date')?.innerText?.trim(),
+              helpful: review.querySelector('.cr-vote-text')?.innerText?.trim()
+            })),
+            specifications: {
+              technical: Object.fromEntries(
+                Array.from(document.querySelectorAll('#productDetails_techSpec_section_1 tr')).map(row => [
+                  row.querySelector('th')?.innerText?.trim(),
+                  row.querySelector('td')?.innerText?.trim()
+                ]).filter(([key, value]) => key && value)
+              ),
+              additional: Object.fromEntries(
+                Array.from(document.querySelectorAll('#productDetails_detailBullets_sections1 tr')).map(row => [
+                  row.querySelector('th')?.innerText?.trim(),
+                  row.querySelector('td')?.innerText?.trim()
+                ]).filter(([key, value]) => key && value)
+              )
+            },
+            categories: Array.from(document.querySelectorAll('#wayfinding-breadcrumbs_container .a-link-normal')).map(cat => cat.innerText.trim()),
+            relatedProducts: Array.from(document.querySelectorAll('#sp-cc-recentlyviewed-items .a-carousel-card')).map(product => ({
+              title: product.querySelector('.p13n-sc-truncate')?.innerText?.trim(),
+              price: product.querySelector('.a-price .a-offscreen')?.innerText?.trim(),
+              rating: product.querySelector('.a-icon-star-small')?.innerText?.trim()
+            }))
+          } : null
         }
       };
       sendResponse({ content });
