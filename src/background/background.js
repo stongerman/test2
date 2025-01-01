@@ -28,7 +28,9 @@ function setupWorker() {
 
         switch (type) {
           case "response":
-            resolve({ response: data });
+            console.log('[Background] Received from worker:', evt.data);
+            console.log('[Background] Sending to popup:', evt.data);
+            resolve(evt.data);
             break;
           case "error":
             reject(new Error(data));

@@ -127,9 +127,13 @@ document.addEventListener('DOMContentLoaded', function() {
         checkModel();
       });
 
+      console.log('[Popup] Received response:', response);
+      console.log('[Popup] Response type:', typeof response);
+      console.log('[Popup] Response.response type:', response && typeof response.response);
       if (response && typeof response.response === "string") {
         contentArea.value += `\n问题：${question}\n回答：${response.response}`;
       } else {
+        console.error('[Popup] Invalid response format:', response);
         showError("AI返回格式异常，请重试");
       }
     } catch (error) {

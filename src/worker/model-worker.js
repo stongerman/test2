@@ -153,11 +153,13 @@ self.onmessage = async function(e) {
 
         const response = `${responsePrefix}\n${content.title}\n\n${relevantContent}`;
         
-        self.postMessage({
+        const responseObj = {
           type: 'response',
           response: response,
           requestId
-        });
+        };
+        console.log('[Worker] Sending response:', responseObj);
+        self.postMessage(responseObj);
       } catch (error) {
         self.postMessage({ 
           type: 'error', 
